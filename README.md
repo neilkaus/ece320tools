@@ -34,7 +34,19 @@ g++ -std=c++17 -fsanitize=address -o irvedecoder decode.cpp main.cpp
 [...]
 
 ```
+### Autotesting
+If you want to automatically check against all of the benchmarks (`.x`) files you've placed in `verif/data`, you can use the `autotest.sh` script, which will automatically simulate all of the benchmarks in your `verif/data` directory, and invoke the autograder to compare them!
+Usage:
+```bash
+$ source autotest.sh <path-to-project-root>
+```
+e.g. 
+```bash
+$ source autotest.sh ~/ece_320/rhvisram-pd4
+```
+Since my pd4 is located at `~/ece_320/rhvisram-pd4`.
 
+To test against all the benchmarks, simply copy the `.x` files in the `rv32-benchmarks` repo into your `verif/data` directory, and invoke `autotest.sh`!
 ## PD5
 
 todo
