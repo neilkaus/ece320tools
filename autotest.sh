@@ -15,7 +15,7 @@ for xfile in $1/verif/data/*; do
     output=$(cargo run --bin betterpd4diff $1/verif/golden/$benchmark.trace $1/verif/sim/verilator/test_pd/$benchmark.trace)
     echo "$output"
 
-    if [[ $output != *"At least one error"* ]] then
+    if [[ $output != *"At least one error"* ]]; then
        num_passed=$(( num_passed + 1 )) 
     fi
 done
