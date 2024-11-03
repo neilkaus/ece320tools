@@ -23,6 +23,8 @@
  * Uses
  * --------------------------------------------------------------------------------------------- */
 
+use riscv_tools::*;
+
 use std::path::Path;
 use std::fs::*;
 use std::io::{BufReader, BufRead, Lines};
@@ -49,7 +51,7 @@ use std::io::{BufReader, BufRead, Lines};
  * Types
  * --------------------------------------------------------------------------------------------- */
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum ParsedLine {
     F{
         pc:     u32,
@@ -174,11 +176,28 @@ impl From<&str> for ParsedLine {
     }
 }
 
+impl std::fmt::Display for ParsedLine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ParsedLine::F{pc, instr} => write!(f, "[F] {:08x} {:08x}", pc, instr),
+            ParsedLine::D{pc, opcode, rd, rs1, rs2, funct3, funct7, imm, shamt} => write!(f, "[D] {:08x} {:02x} {:02x} {:02x} {:02x} {:01x} {:02x} {:08x} {:02x}", pc, opcode, rd, rs1, rs2, funct3, funct7, imm, shamt),
+            ParsedLine::R{addr_rs1, addr_rs2, data_rs1, data_rs2} => write!(f, "[R] {:02x} {:02x} {:08x} {:08x}", addr_rs1, addr_rs2, data_rs1, data_rs2),
+            ParsedLine::E{pc, alu_result, branch_taken} => write!(f, "[E] {:08x} {:08x} {}", pc, alu_result, if *branch_taken {1} else {0}),
+            ParsedLine::M{pc, addr, read_not_write, access_size, memory_wdata} => write!(f, "[M] {:08x} {:08x} {} {:01x} {:08x}", pc, addr, if *read_not_write {1} else {0}, access_size, memory_wdata),
+            ParsedLine::W{pc, we, addr_rd, data_rd} => write!(f, "[W] {:08x} {} {:02x} {:08x}", pc, if *we {1} else {0}, addr_rd, data_rd),
+        }
+    }
+}
+
 /* ------------------------------------------------------------------------------------------------
  * Functions
  * --------------------------------------------------------------------------------------------- */
 
-//TODO
+pub fn disassemble(instr: &Instruction) -> String {
+    let mut buffer = Vec::new();
+    instr.disassemble(&mut buffer).unwrap();
+    String::from_utf8(buffer).unwrap()
+}
 
 /* ------------------------------------------------------------------------------------------------
  * Tests
