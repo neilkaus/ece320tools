@@ -18,7 +18,7 @@ checksum = "54e5ff2f489f180f10751ddcdd49b2f56b4aa2ea32971b3c4375f4632a8dc8ad"
 [[package]]
 name = "riscv_tools"
 version = "0.0.0"
-source = "git+https://git.jekel.ca/jzj/riscv_tools.git?branch=jzj/stableish_branch_for_ece320_tools#47c5db08488cca9a0358b90d789eb1c8b96c96c7"
+source = "git+https://git.jekel.ca/jzj/riscv_tools.git?branch=jzj/stableish_branch_for_ece320_tools#9d1ec85f8fd94ea1c341680e8716fea6886f5823"
 dependencies = [
  "quickbits",
 ]
