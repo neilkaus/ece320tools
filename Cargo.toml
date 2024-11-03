@@ -1,0 +1,26 @@
+[package]
+name = "ece320tools"
+version = "0.0.0"
+edition = "2021"
+
+[dependencies]
+riscv_tools = { git = "https://git.jekel.ca/jzj/riscv_tools.git", branch = "jzj/stableish_branch_for_ece320_tools" }
+
+[lib]
+name = "common"
+path = "rust/lib.rs"
+
+[[bin]]
+name = "betterpd4diff"
+path = "rust/bin/betterpd4diff.rs"
+
+[[bin]]
+name = "pd5diff"
+path = "rust/bin/pd5diff.rs"
+
+[profile.release]
+codegen-units   = 1
+strip           = true
+overflow-checks = false
+panic           = "abort"
+lto             = true
