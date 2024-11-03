@@ -12,9 +12,12 @@ for xfile in $1/verif/data/*; do
 
     make -C $1/verif/scripts -s run TEST=test_pd MEM_PATH=$1/verif/data/$benchmark.x
 
-    if ! cargo run --bin betterpd4diff $1/verif/golden/$benchmark.trace $1/verif/sim/verilator/test_pd/$benchmark.trace | grep -q "At least one error"; then
-        num_passed=$((num_passed + 1));
+    output=$(cargo run --bin betterpd4diff $1/verif/golden/$benchmark.trace $1/verif/sim/verilator/test_pd/$benchmark.trace)
+    echo "$output"
+
+    if [[ $output != *"At least one error"* ]] then
+       num_passed=$(( num_passed + 1 )) 
     fi
 done
 echo "$num_passed/$num_benchmarks passed! See output for details on (potential) error messages"
-echo "Thanks for using the autotest :)"
+echo "Thanks for using autotest :)"
