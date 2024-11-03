@@ -15,6 +15,6 @@ for xfile in $1/verif/data/*; do
     if ! cargo run --bin betterpd4diff $1/verif/golden/$benchmark.trace $1/verif/sim/verilator/test_pd/$benchmark.trace | grep -q "At least one error"; then
         num_passed=$((num_passed + 1));
     fi
-    
-    echo "$num_passed/$num_benchmarks passed! See output for details on (potential) error messages"
 done
+echo "$num_passed/$num_benchmarks passed! See output for details on (potential) error messages"
+echo "Thanks for using the autotest :)"
