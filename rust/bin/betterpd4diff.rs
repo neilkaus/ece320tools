@@ -72,18 +72,25 @@ use riscv_tools::*;
  * Functions
  * --------------------------------------------------------------------------------------------- */
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let golden = std::env::args().nth(1).expect("No golden trace file provided!");
     let test   = std::env::args().nth(2).expect("No test trace file provided!");
 
     let golden = ParsedLineIterator::from_path(golden).expect("Failed to open golden trace file!");
     let test   = ParsedLineIterator::from_path(test).expect("Failed to open test trace file!");
 
-    compare(golden, test);
+    let total_error_count = compare(golden, test);
     println!("Done! If you didn't see any errors above, then you (should) be good!");
+
+    if total_error_count > 0 {
+        std::process::ExitCode::FAILURE
+    } else {
+        std::process::ExitCode::SUCCESS
+    }
 }
 
-fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) {
+fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
+    let mut total_error_count = 0;
     let mut last_fetched_pc: Option<u32> = None;
     let mut last_fetched_instr: Option<Instruction> = None;
     for (ii, (g, t)) in golden.zip(test).enumerate() {
@@ -277,18 +284,20 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) {
                     print_error("PCs do not match!");
                 }
 
-                if g_we != t_we {
-                    print_error("Write enable flags do not match!");
-                }
-
-                if let Some(jzj_addr_rd) = last_fetched_instr.get_rd() {
-                    if g_addr_rd != t_addr_rd {
-                        print_error("RD addresses do not match!");
+                if !last_fetched_instr.is_fence() {
+                    if g_we != t_we {
+                        print_error("Write enable flags do not match!");
                     }
-                    assert_eq!(g_addr_rd, jzj_addr_rd);//Else likely bug in my Rust code
 
-                    if g_data_rd != t_data_rd {
-                        print_error("RD data does not match!");
+                    if let Some(jzj_addr_rd) = last_fetched_instr.get_rd() {
+                        if g_addr_rd != t_addr_rd {
+                            print_error("RD addresses do not match!");
+                        }
+                        assert_eq!(g_addr_rd, jzj_addr_rd);//Else likely bug in my Rust code
+
+                        if g_data_rd != t_data_rd {
+                            print_error("RD data does not match!");
+                        }
                     }
                 }
             },
@@ -299,7 +308,11 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) {
         if error_count_this_line > 0 {
             println!("End of error report for line {}.", ii + 1);
         }
+
+        total_error_count += error_count_this_line;
     }
+
+    total_error_count
 }
 
 /* ------------------------------------------------------------------------------------------------
