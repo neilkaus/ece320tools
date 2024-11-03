@@ -34,6 +34,7 @@ g++ -std=c++17 -fsanitize=address -o irvedecoder decode.cpp main.cpp
 [...]
 
 ```
+### Autotesting
 If you want to automatically check against all of the benchmarks (`.x`) files you've placed in `verif/data`, you can use the `autotest.sh` script, which will automatically simulate all of the benchmarks in your `verif/data` directory, and invoke the autograder to compare them!
 Usage:
 ```bash
