@@ -266,7 +266,9 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
                     if g_access_size != t_access_size {
                         print_error("Access sizes do not match!");
                     }
+                }
 
+                if last_fetched_instr.is_stype() {
                     if g_memory_wdata != t_memory_wdata {
                         print_error("Memory write data does not match!");
                     }
