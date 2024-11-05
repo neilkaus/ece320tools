@@ -1,6 +1,6 @@
 /*
  * File:    betterpd4diff.rs
- * Brief:   TODO
+ * Brief:   Quickly-written Improved autograder for pd4
  *
  * Copyright (C) 2024 John Jekel
  * See the LICENSE file at the root of the project for licensing info.
