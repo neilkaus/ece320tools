@@ -79,24 +79,33 @@ struct Pipeline {
 impl StageState {
     fn dis(&self) -> String {
         if let Some(instr_ref) = self.instr.as_ref() {
-            format!("PC: {:08x} -> Inst: {}", self.pc, disassemble(instr_ref))
+            format!("instruction @PC {:08x}: {}", self.pc, disassemble(instr_ref))
         } else {
-            String::from("(Bubble)")
+            String::from("nothing (bubble)")
         }
     }
 
-    fn is_bubble(&self) -> bool {
+    const fn is_bubble(&self) -> bool {
         self.instr.is_none()
     }
 }
 
 impl Pipeline {
-    fn clock(&mut self) {
+    fn dumb_advance(&mut self, f_pc: u32, f_instr: Instruction) {
         self.w = std::mem::take(&mut self.m);
         self.m = std::mem::take(&mut self.e);
         self.e = std::mem::take(&mut self.d);
         self.d = std::mem::take(&mut self.f);
-        self.f = StageState::default();
+        self.f = StageState {
+            pc:     f_pc,
+            instr:  Some(f_instr),
+        };
+    }
+
+    fn dumb_advance_with_stalled_fetch_and_decode(&mut self) {
+        self.w = std::mem::take(&mut self.m);
+        self.m = std::mem::take(&mut self.e);
+        self.e = StageState::default();
     }
 }
 
@@ -118,7 +127,9 @@ impl Pipeline {
 
 fn main() -> std::process::ExitCode {
     println!("{}", LOGO);
-    println!("pd5diff v{} by \x1b[1;35mJZJ\x1b[0m", env!("CARGO_PKG_VERSION"));
+    println!("pd5diff v{} by \x1b[1;35mJZJ :)\x1b[0m", env!("CARGO_PKG_VERSION"));
+    println!("\x1b[1;94m\"Now with colour! Whoop whoop!\"\x1b[0m");
+    println!();
 
     let main_body_result = (|| {
         let (golden_path, test_path) = args()?;
@@ -143,7 +154,7 @@ fn main() -> std::process::ExitCode {
         println!("\x1b[1;31mpd5diff encountered at least one error!\x1b[0m");
         std::process::ExitCode::FAILURE
     } else {
-        println!("\x1b[1;32mpd5diff is exiting with success!\x1b[0m");
+        println!("\x1b[1;32mpd5diff is exiting with success! Nicely done! :)\x1b[0m");
         std::process::ExitCode::SUCCESS
     }
 }
@@ -184,12 +195,15 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
     let mut total_error_count   = 0;
     let mut pipeline            = Pipeline::default();
 
+    //TODO for better performance, avoid collecting here (too bad array_chunks() is unstable)
     let lines_vec: Vec<(ParsedLine, ParsedLine)> = golden.zip(test).collect();
     let line_chunks = lines_vec.chunks(6);//[F], [D], [R], [E], [M], [W]
 
+    let mut squash_fetch_and_decode_next_cycle = false;
+
     for (chunk_num, chunk) in line_chunks.enumerate() {
         //Convenient aliases
-        let chunk_num           = chunk_num + 1;
+        let chunk_num           = chunk_num + 1;//Since enumerate() is zero-indexed
         let (g_fline, t_fline)  = chunk[0];
         let (g_dline, t_dline)  = chunk[1];
         let (g_rline, t_rline)  = chunk[2];
@@ -197,14 +211,70 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
         let (g_mline, t_mline)  = chunk[4];
         let (g_wline, t_wline)  = chunk[5];
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //Pipeline updating logic
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        if squash_fetch_and_decode_next_cycle {
+            pipeline.f = StageState::default();
+            pipeline.d = StageState::default();
+            squash_fetch_and_decode_next_cycle = false;
+        }
 
-        //Error handling
-        //TODO make it so Instruction implements Clone so we don't have to pass pipeline every time
+        //Check if fetch and decode stalled, in which case we shouldn't touch fetch or decode and should squash execute
+        let fetch_and_decode_stalled = if let (ParsedLine::D{pc: g_d_pc, ..}, ParsedLine::E{pc: g_e_pc, ..}) = (g_dline, g_eline) {
+            //Don't check if E is a bubble because it could be we're stalling multiple cycles
+            //We do need to check D though because if the PCs just happen to match but were squashed we're not actually stalling
+            if !pipeline.d.is_bubble() {
+                g_d_pc == g_e_pc
+            } else {
+                false
+            }
+        } else {
+            println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd5diff correct?\x1b[0m");
+            false
+        };
+
+        if fetch_and_decode_stalled {
+            pipeline.dumb_advance_with_stalled_fetch_and_decode();
+        } else if let ParsedLine::F{pc: g_pc, instr: g_instr} = g_fline {
+            if g_pc == 0 {
+                println!("PC in golden trace became 00000000, assuming we've reached the end!");
+                println!("\x1b[90m(This is expected for simple-programs golden traces, since if you");
+                println!("look at their assembly, when they return from main, since `ra` is initialized");
+                println!("to 0 by our hardware, but never by their code, the PC naturally becomes 0.");
+                println!("Technically a bug in their test programs, but it's a nice end-of-code flag for us!)\x1b[0m");
+
+                break;
+            }
+            if g_instr == 0 {
+                println!("Encountered illegal instruction in golden trace, assuming we've reached the end!");
+                println!("\x1b[90m(This is expected for individual-instruction golden traces, since we simply");
+                println!("implement ecall as a NOP, and since these traces end in an ecall, we thus run");
+                println!("into the data afterwards in memory, interpreting it as an instruction)\x1b[0m");
+                break;
+            }
+            pipeline.dumb_advance(g_pc, g_instr.into());
+        } else {
+            println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd5diff correct?\x1b[0m");
+        }
+
+        //If the branch taken flag is set in execute, squash fetch and decode next cycle
+        if !pipeline.e.is_bubble() {
+            if let ParsedLine::E{branch_taken: g_branch_taken, ..} = g_eline {
+                //It seems that branch taken in their traces for PD5 is now also set for
+                //unconditional branches? Weird that that wasn't the case for PD4...
+                squash_fetch_and_decode_next_cycle = g_branch_taken;
+            }
+        }
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //Error handling used by line checking below
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
         let mut chunk_error_count = 0;
-        let mut print_error = |pipeline: &Pipeline, msg: &str| {
+        let mut print_error = |message| {
             if chunk_error_count == 0 {
                 println!(
-                    "At least one error on clock cycle #{} containing lines {} thru {}:",
+                    "At least one error on clock cycle #{} containing lines {} thru {} (inclusive):",
                     chunk_num,
                     chunk_num * 6 - 5,
                     chunk_num * 6
@@ -217,58 +287,51 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
                 println!("  \x1b[1;33m  {}\x1b[0m        |   \x1b[1m{}\x1b[0m", g_mline, t_mline);
                 println!("  \x1b[1;33m  {}\x1b[0m                |   \x1b[1m{}\x1b[0m", g_wline, t_wline);
                 println!("  \x1b[1;33mGolden Disassembly:");
-                println!("    \x1b[1;33m[F]     is processing: {}\x1b[0m", pipeline.f.dis());
-                println!("    \x1b[1;33m[D]/[R] is processing: {}\x1b[0m", pipeline.d.dis());
-                println!("    \x1b[1;33m[E]     is processing: {}\x1b[0m", pipeline.e.dis());
-                println!("    \x1b[1;33m[M]     is processing: {}\x1b[0m", pipeline.m.dis());
-                println!("    \x1b[1;33m[W]     is processing: {}\x1b[0m", pipeline.w.dis());
+                println!("    \x1b[1;33m[F]     is processing {}\x1b[0m", pipeline.f.dis());
+                println!("    \x1b[1;33m[D]/[R] is processing {}\x1b[0m", pipeline.d.dis());
+                println!("    \x1b[1;33m[E]     is processing {}\x1b[0m", pipeline.e.dis());
+                println!("    \x1b[1;33m[M]     is processing {}\x1b[0m", pipeline.m.dis());
+                println!("    \x1b[1;33m[W]     is processing {}\x1b[0m", pipeline.w.dis());
                 println!("  \x1b[1;31mErrors:\x1b[0m");
             }
             chunk_error_count += 1;
-            println!("    \x1b[1;31mError {}: {}\x1b[0m", chunk_error_count, msg);
+            println!("    \x1b[1;31mError {}: {}\x1b[0m", chunk_error_count, message);
         };
 
-        //Pipeline updating logic
-
-        //TODO squashing logic/etc here
-        pipeline.clock();
-
-        //Line checking below
-
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //[F] Line Checking
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
         if let (ParsedLine::F{pc: g_pc, instr: g_instr}, ParsedLine::F{pc: t_pc, instr: t_instr}) = (g_fline, t_fline) {
-            pipeline.f.pc = g_pc;
-            if g_instr == 0 {//Likely the end of the trace
-                pipeline.f.instr = None;
-            } else {
-                pipeline.f.instr = Some(Instruction::from(g_instr));
-            }
-
             if g_pc != t_pc {
-                print_error(&pipeline, "[F] PCs do not match!");
+                print_error("[F] PCs do not match!");
             }
+            assert_eq!(g_pc, pipeline.f.pc, "pd5diff bug or bad golden trace");
 
             if g_instr != t_instr {
-                print_error(&pipeline, "[F] Fetched instructions do not match!");
+                print_error("[F] Fetched instructions do not match!");
             }
         } else {
-            print_error(&pipeline, "[F] Mismatched line types or bad traces! Something is VERY wrong!");
+            print_error("[F] Mismatched line types or bad traces! Something is VERY wrong!");
         }
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //[D] and [R] Line Checking
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
         if !pipeline.d.is_bubble() {
             let instr = pipeline.d.instr.as_ref().unwrap();
 
             if let (
                 ParsedLine::D{pc: g_pc, opcode: g_opcode, rd: g_rd, rs1: g_rs1, rs2: g_rs2, funct3: g_funct3, funct7: g_funct7, imm: g_imm, shamt: g_shamt},
                 ParsedLine::D{pc: t_pc, opcode: t_opcode, rd: t_rd, rs1: t_rs1, rs2: t_rs2, funct3: t_funct3, funct7: t_funct7, imm: t_imm, shamt: t_shamt}
-                ) = (g_dline, t_dline) {
-
+            ) = (g_dline, t_dline) {
                 if g_pc != t_pc {
-                    print_error(&pipeline, "[D] PCs do not match!");
+                    print_error("[D] PCs do not match!");
                 }
+                assert_eq!(g_pc, pipeline.d.pc, "pd5diff bug or bad golden trace");
 
                 if !instr.is_fence() {
                     if g_opcode != t_opcode {
-                        print_error(&pipeline, "[D] Opcodes do not match!");
+                        print_error("[D] Opcodes do not match!");
                     }
                 }
 
@@ -276,179 +339,187 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
 
                 if let Some(jzj_rd) = instr.get_rd() {
                     if g_rd != t_rd {
-                        print_error(&pipeline, "[D] RDs do not match!");
+                        print_error("[D] RDs do not match!");
                     }
                     assert_eq!(g_rd, jzj_rd, "pd5diff bug or bad golden trace");
                 }
 
                 if let Some(jzj_rs1) = instr.get_rs1() {
                     if g_rs1 != t_rs1 {
-                        print_error(&pipeline, "[D] RS1s do not match!");
+                        print_error("[D] RS1s do not match!");
                     }
                     assert_eq!(g_rs1, jzj_rs1, "pd5diff bug or bad golden trace");
                 }
 
                 if let Some(jzj_rs2) = instr.get_rs2() {
                     if g_rs2 != t_rs2 {
-                        print_error(&pipeline, "[D] RS2s do not match!");
+                        print_error("[D] RS2s do not match!");
                     }
                     assert_eq!(g_rs2, jzj_rs2, "pd5diff bug or bad golden trace");
                 }
 
                 if let Some(jzj_funct3) = instr.get_funct3() {
                     if g_funct3 != t_funct3 {
-                        print_error(&pipeline, "[D] Funct3s do not match!");
+                        print_error("[D] Funct3s do not match!");
                     }
                     assert_eq!(g_funct3, jzj_funct3, "pd5diff bug or bad golden trace");
                 }
 
                 if let Some(jzj_funct7) = instr.get_funct7() {
                     if g_funct7 != t_funct7 {
-                        print_error(&pipeline, "[D] Funct7s do not match!");
+                        print_error("[D] Funct7s do not match!");
                     }
                     assert_eq!(g_funct7, jzj_funct7, "pd5diff bug or bad golden trace");
                 }
 
                 if let Some(jzj_imm) = instr.get_imm() {
                     if g_imm != t_imm {
-                        print_error(&pipeline, "[D] IMMs do not match!");
+                        print_error("[D] IMMs do not match!");
                     }
                     assert_eq!(g_imm, jzj_imm as u32, "pd5diff bug or bad golden trace");
                 }
 
                 if let Some(jzj_shamt) = instr.get_shamt() {
                     if g_shamt != t_shamt {
-                        print_error(&pipeline, "[D] SHAMTs do not match!");
+                        print_error("[D] SHAMTs do not match!");
                     }
                     assert_eq!(g_shamt, jzj_shamt, "pd5diff bug or bad golden trace");
                 }
             } else {
-                print_error(&pipeline, "[D] Mismatched line types or bad traces! Something is VERY wrong!");
+                print_error("[D] Mismatched line types or bad traces! Something is VERY wrong!");
             }
 
             if let (
                 ParsedLine::R{addr_rs1: g_addr_rs1, addr_rs2: g_addr_rs2, data_rs1: g_data_rs1, data_rs2: g_data_rs2},
                 ParsedLine::R{addr_rs1: t_addr_rs1, addr_rs2: t_addr_rs2, data_rs1: t_data_rs1, data_rs2: t_data_rs2}
-                ) = (g_rline, t_rline) {
-
+            ) = (g_rline, t_rline) {
                 if let Some(jzj_rs1) = instr.get_rs1() {
                     if g_addr_rs1 != t_addr_rs1 {
-                        print_error(&pipeline, "[R] RS1 addresses do not match!");
+                        print_error("[R] RS1 addresses do not match!");
                     }
                     assert_eq!(g_addr_rs1, jzj_rs1, "pd5diff bug or bad golden trace");
 
                     if g_data_rs1 != t_data_rs1 {
-                        print_error(&pipeline, "[R] RS1 data does not match!");
+                        print_error("[R] RS1 data does not match!");
                     }
                 }
 
                 if let Some(jzj_rs2) = instr.get_rs2() {
                     if g_addr_rs2 != t_addr_rs2 {
-                        print_error(&pipeline, "[R] RS2 addresses do not match!");
+                        print_error("[R] RS2 addresses do not match!");
                     }
                     assert_eq!(g_addr_rs2, jzj_rs2, "pd5diff bug or bad golden trace");
 
                     if g_data_rs2 != t_data_rs2 {
-                        print_error(&pipeline, "[R] RS2 data does not match!");
+                        print_error("[R] RS2 data does not match!");
                     }
                 }
             } else {
-                print_error(&pipeline, "[R] Mismatched line types or bad traces! Something is VERY wrong!");
+                print_error("[R] Mismatched line types or bad traces! Something is VERY wrong!");
             }
         }
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //[E] Line Checking
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
         if !pipeline.e.is_bubble() {
             let instr = pipeline.e.instr.as_ref().unwrap();
 
             if let (
                 ParsedLine::E{pc: g_pc, alu_result: g_alu_result, branch_taken: g_branch_taken},
                 ParsedLine::E{pc: t_pc, alu_result: t_alu_result, branch_taken: t_branch_taken}
-                ) = (g_eline, t_eline) {
-
+            ) = (g_eline, t_eline) {
                 if g_pc != t_pc {
-                    print_error(&pipeline, "[E] PCs do not match!");
+                    print_error("[E] PCs do not match!");
                 }
+                assert_eq!(g_pc, pipeline.e.pc, "pd5diff bug or bad golden trace");
 
                 if !instr.is_fence() && !instr.is_system() {
                     if g_alu_result != t_alu_result {
-                        print_error(&pipeline, "[E] ALU results do not match!");
+                        print_error("[E] ALU results do not match!");
                     }
                 }
 
                 if instr.is_btype() {
                     if g_branch_taken != t_branch_taken {
-                        print_error(&pipeline, "[E] Branch taken line does not match!");
+                        print_error("[E] Branch taken line does not match!");
                     }
                 }
             } else {
-                print_error(&pipeline, "[E] Mismatched line types or bad traces! Something is VERY wrong!");
+                print_error("[E] Mismatched line types or bad traces! Something is VERY wrong!");
             }
         }
 
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //[M] Line Checking
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
         if !pipeline.m.is_bubble() {
             let instr = pipeline.m.instr.as_ref().unwrap();
             if let (
                 ParsedLine::M{pc: g_pc, addr: g_addr, read_not_write: g_read_not_write, access_size: g_access_size, memory_wdata: g_memory_wdata},
                 ParsedLine::M{pc: t_pc, addr: t_addr, read_not_write: t_read_not_write, access_size: t_access_size, memory_wdata: t_memory_wdata}
             ) = (g_mline, t_mline) {
-
                 if g_pc != t_pc {
-                    print_error(&pipeline, "[M] PCs do not match!");
+                    print_error("[M] PCs do not match!");
                 }
+                assert_eq!(g_pc, pipeline.m.pc, "pd5diff bug or bad golden trace");
 
                 if g_read_not_write != t_read_not_write {
-                    print_error(&pipeline, "[M] Read-not-write line does not match!");
+                    print_error("[M] Read-not-write line does not match!");
                 }
 
                 if instr.is_memory() {
                     if g_addr != t_addr {
-                        print_error(&pipeline, "[M] Addresses do not match!");
+                        print_error("[M] Addresses do not match!");
                     }
 
                     if g_access_size != t_access_size {
-                        print_error(&pipeline, "[M] Access sizes do not match!");
+                        print_error("[M] Access sizes do not match!");
                     }
                 }
 
                 if instr.is_stype() {
                     if g_memory_wdata != t_memory_wdata {
-                        print_error(&pipeline, "[M] Memory write data does not match!");
+                        print_error("[M] Memory write data does not match!");
                     }
                 }
             } else {
-                print_error(&pipeline, "[M] Mismatched line types or bad traces! Something is VERY wrong!");
+                print_error("[M] Mismatched line types or bad traces! Something is VERY wrong!");
             }
         }
 
-        if !pipeline.m.is_bubble() {
-            let instr = pipeline.m.instr.as_ref().unwrap();
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //[W] Line Checking
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        if !pipeline.w.is_bubble() {
+            let instr = pipeline.w.instr.as_ref().unwrap();
             if let (
                 ParsedLine::W{pc: g_pc, we: g_we, addr_rd: g_addr_rd, data_rd: g_data_rd},
                 ParsedLine::W{pc: t_pc, we: t_we, addr_rd: t_addr_rd, data_rd: t_data_rd}
-                ) = (g_wline, t_wline) {
-
+            ) = (g_wline, t_wline) {
                 if g_pc != t_pc {
-                    print_error(&pipeline, "PCs do not match!");
+                    print_error("[W] PCs do not match!");
                 }
+                assert_eq!(g_pc, pipeline.w.pc, "pd5diff bug or bad golden trace");
 
                 if !instr.is_fence() {
                     if g_we != t_we {
-                        print_error(&pipeline, "Write enable line does not match!");
+                        print_error("[W] Write enable line does not match!");
                     }
 
                     if let Some(jzj_addr_rd) = instr.get_rd() {
                         if g_addr_rd != t_addr_rd {
-                            print_error(&pipeline, "RD addresses do not match!");
+                            print_error("[W] RD addresses do not match!");
                         }
                         assert_eq!(g_addr_rd, jzj_addr_rd, "pd5diff bug or bad golden trace");
 
                         if g_data_rd != t_data_rd {
-                            print_error(&pipeline, "RD data does not match!");
+                            print_error("[W] RD data does not match!");
                         }
                     }
                 }
             } else {
-                print_error(&pipeline, "[W] Mismatched line types or bad traces! Something is VERY wrong!");
+                print_error("[W] Mismatched line types or bad traces! Something is VERY wrong!");
             }
         }
 
