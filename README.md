@@ -14,6 +14,70 @@ Whelp hope this helps people out!
 
 \- JZJ
 
+## PD5
+
+### pd5diff
+
+Based on the PD4 decoder in Rust, PD5 diff should have minimal (if any) false positives.
+
+While you can invoke cargo directly to use it, I've provided a convenience `pd5diff.sh` script
+which will take care of it for you **and enable some compiler optimizations.**
+
+Example usage:
+
+```bash
+
+$ ./pd5diff.sh path/to/golden_trace.trace path/to/your_trace.trace
+    Finished `release` profile [optimized] target(s) in 0.02s
+     Running `target/release/pd5diff path/to/golden_trace.trace path/to/your_trace.trace`
+
+           _ ____      _ _  __  __ 
+ _ __   __| | ___|  __| (_)/ _|/ _|
+| '_ \ / _` |___ \ / _` | | |_| |_ 
+| |_) | (_| |___) | (_| | |  _|  _|
+| .__/ \__,_|____/ \__,_|_|_| |_|  
+|_|                                  for ECE 320
+
+pd5diff v0.2.0 by JZJ :)
+"Now with colour! Whoop whoop!"
+
+Path to golden trace: path/to/golden_trace.trace
+Path to your trace:   path/to/your_trace.trace
+Successfully loaded both traces!
+Comparing traces...
+At least one error on clock cycle #61 containing lines 361 thru 366 (inclusive):
+  Golden                                      | Yours
+    [F] 010000c0 00a00193                     |   [F] 010000c0 00a00193
+    [D] 010000bc 13 1d 1d 00 0 3f 000007fe 1e |   [D] 010000bc 13 1d 1d 00 0 3f 000007fe 1e
+    [R] 1d 00 7fffffff 00000000               |   [R] 1d 00 7fffffff 00000000
+    [E] 010000b8 80000000 0                   |   [E] 010000b8 80000000 0
+    [M] 010000b4 800007fe 0 0 00000000        |   [M] 010000b4 deadbeef 0 0 00000000
+    [W] 010000b0 1 01 7fffffff                |   [W] 010000b0 0 01 7fffffff
+  Golden Disassembly:
+    [F]     is processing instruction @PC 010000c0: addi x3, x0, 10
+    [D]/[R] is processing instruction @PC 010000bc: addi x29, x29, 2046
+    [E]     is processing instruction @PC 010000b8: lui x29, 524288
+    [M]     is processing instruction @PC 010000b4: addi x30, x1, 2047
+    [W]     is processing instruction @PC 010000b0: addi x1, x1, -1
+  Errors:
+    Error 1: [W] Write enable line does not match!
+Encountered illegal instruction in golden trace, assuming we've reached the end!
+(This is expected for individual-instruction golden traces, since we simply
+implement ecall as a NOP, and since these traces end in an ecall, we thus run
+into the data afterwards in memory, interpreting it as an instruction)
+Found 1 errors!
+pd5diff encountered at least one error!
+
+```
+
+Note how `pd5diff` detects that the rd write-enable for the addi in the writeback stage
+is 0 when it should be 1, while ignoring the invalid memory address for the addi in the
+memory stage because it's a don't care value! (addi doesn't access memory!)
+
+### Autotesting
+
+TODO port the PD4 autotesting script to PD5 so people don't have to manually call `pd5diff` on all the benchmarks.
+
 ## PD4
 
 ### New Rust decoder-based Trace Comparison
@@ -81,11 +145,3 @@ $ source autotest.sh ~/ece_320/rhvisram-pd4
 Since my pd4 is located at `~/ece_320/rhvisram-pd4`.
 
 To test against all the benchmarks, simply copy the `.x` files in the `rv32-benchmarks` repo into your `verif/data` directory, and invoke `autotest.sh`!
-
-## PD5
-
-todo
-
-## PD6
-
-todo
