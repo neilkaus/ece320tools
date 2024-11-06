@@ -75,7 +75,20 @@ memory stage because it's a don't care value! (addi doesn't access memory!)
 
 ### Autotesting
 
-TODO port the PD4 autotesting script to PD5 so people don't have to manually call `pd5diff` on all the benchmarks.
+If you want to automatically check against all of the benchmarks (`.x`) files you've placed in `verif/data`, you can use the `autotest.sh` script, which will automatically simulate all of the benchmarks in your `verif/data` directory, and invoke the autograder to compare them!
+
+Usage:
+```bash
+$ source pd5autotest.sh <path-to-project-root>
+```
+e.g. 
+```bash
+$ source pd5autotest.sh ~/ece_320/rhvisram-pd5
+```
+
+Since my pd5 is located at `~/ece_320/rhvisram-pd5`.
+
+To test against all the benchmarks, simply copy the `.x` files in the `rv32-benchmarks` repo into your `verif/data` directory, and invoke `pd5autotest.sh`!
 
 ## PD4
 
