@@ -18,7 +18,7 @@ Whelp hope this helps people out!
 
 ### pd5diff
 
-Based on the PD4 decoder in Rust, PD5 diff should have minimal (if any) false positives.
+Based on the PD4 decoder in Rust, `pd5diff` should have minimal (if any) false positives.
 
 While you can invoke cargo directly to use it, I've provided a convenience `pd5diff.sh` script
 which will take care of it for you **and enable some compiler optimizations.**
@@ -38,7 +38,7 @@ $ ./pd5diff.sh path/to/golden_trace.trace path/to/your_trace.trace
 | .__/ \__,_|____/ \__,_|_|_| |_|  
 |_|                                  for ECE 320
 
-pd5diff v0.2.0 by JZJ :)
+pd5diff v0.2.1 by JZJ :)
 "Now with colour! Whoop whoop!"
 
 Path to golden trace: path/to/golden_trace.trace
@@ -59,13 +59,12 @@ At least one error on clock cycle #61 containing lines 361 thru 366 (inclusive):
     [E]     is processing instruction @PC 010000b8: lui x29, 524288
     [M]     is processing instruction @PC 010000b4: addi x30, x1, 2047
     [W]     is processing instruction @PC 010000b0: addi x1, x1, -1
-  Errors:
+  Error(s):
     Error 1: [W] Write enable line does not match!
-Encountered illegal instruction in golden trace, assuming we've reached the end!
-(This is expected for individual-instruction golden traces, since we simply
-implement ecall as a NOP, and since these traces end in an ecall, we thus run
-into the data afterwards in memory, interpreting it as an instruction)
-Found 1 errors!
+
+[...]
+
+Found 1 error(s)!
 pd5diff encountered at least one error!
 
 ```

@@ -142,7 +142,7 @@ fn main() -> std::process::ExitCode {
         let errors = compare(golden_trace, test_trace);
 
         if errors > 0 {
-            println!("\x1b[1;31mFound {} errors!\x1b[0m", errors);
+            println!("\x1b[1;31mFound {} error(s)!\x1b[0m", errors);
             Err(())
         } else {
             println!("\x1b[1;32mNo errors found!\x1b[0m");
@@ -292,7 +292,7 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
                 println!("    \x1b[1;33m[E]     is processing {}\x1b[0m", pipeline.e.dis());
                 println!("    \x1b[1;33m[M]     is processing {}\x1b[0m", pipeline.m.dis());
                 println!("    \x1b[1;33m[W]     is processing {}\x1b[0m", pipeline.w.dis());
-                println!("  \x1b[1;31mErrors:\x1b[0m");
+                println!("  \x1b[1;31mError(s):\x1b[0m");
             }
             chunk_error_count += 1;
             println!("    \x1b[1;31mError {}: {}\x1b[0m", chunk_error_count, message);
