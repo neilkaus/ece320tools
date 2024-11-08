@@ -258,12 +258,17 @@ fn compare(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
             println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd5diff correct?\x1b[0m");
         }
 
-        //If the branch taken flag is set in execute, squash fetch and decode next cycle
-        if !pipeline.e.is_bubble() {
-            if let ParsedLine::E{branch_taken: g_branch_taken, ..} = g_eline {
-                //It seems that branch taken in their traces for PD5 is now also set for
-                //unconditional branches? Weird that that wasn't the case for PD4...
-                squash_fetch_and_decode_next_cycle = g_branch_taken;
+        //If execute is processing a branch and the branch taken flag is set, or this is an
+        //unconditional jump, squash fetch and decode next cycle
+        if let Some(instr) = pipeline.e.instr.as_ref() {
+            if instr.is_btype() {
+                if let ParsedLine::E{branch_taken: g_branch_taken, ..} = g_eline {
+                    //It seems that branch taken in their traces for PD5 is now also set for
+                    //unconditional branches? Weird that that wasn't the case for PD4...
+                    squash_fetch_and_decode_next_cycle = g_branch_taken;
+                }
+            } else if instr.is_uncond_jump() {
+                squash_fetch_and_decode_next_cycle = true;
             }
         }
 
