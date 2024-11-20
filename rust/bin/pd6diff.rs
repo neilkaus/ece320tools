@@ -92,7 +92,7 @@ enum Mode {
 impl StageState {
     fn dis(&self) -> String {
         match self.instr.as_ref() {
-            Ok(instr_ref)                                               => format!("instruction @PC {:08x}: {:08x}: {}", self.pc, 0xDEAD, disassemble(instr_ref)),
+            Ok(instr_ref)                                               => format!("instruction @PC {:08x}: {:08x}: {}", self.pc, instr_ref.assume_uncompressed(), disassemble(instr_ref)),
             Err(InstrNotPresentReason::Bubble)                          => String::from("nothing (bubble)"),
             Err(InstrNotPresentReason::StallSoInstrWordNotAvailable)    => format!("instruction @PC {:08x}: ????????: instruction word not available from golden trace due to stall", self.pc),
         }
