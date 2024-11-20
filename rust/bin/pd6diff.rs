@@ -94,7 +94,7 @@ impl StageState {
         match self.instr.as_ref() {
             Ok(instr_ref)                                               => format!("instruction @PC {:08x}: {:08x}: {}", self.pc, instr_ref.assume_uncompressed(), disassemble(instr_ref)),
             Err(InstrNotPresentReason::Bubble)                          => String::from("nothing (bubble)"),
-            Err(InstrNotPresentReason::StallSoInstrWordNotAvailable)    => format!("instruction @PC {:08x}: ????????: instruction word not available from golden trace due to stall", self.pc),
+            Err(InstrNotPresentReason::StallSoInstrWordNotAvailable)    => format!("instruction @PC {:08x}: ????????: instruction word not available from golden trace due to stall next cycle", self.pc),
         }
     }
 
@@ -236,7 +236,7 @@ fn load_trace(path: impl AsRef<std::path::Path>) -> Result<ParsedLineIterator> {
 }
 
 //Returns the number of errors
-fn compare_board(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
+fn compare_board(_golden: ParsedLineIterator, _test: ParsedLineIterator) -> u32 {
     panic!("Board mode not yet implemented, need to handle only checking writeback!");
 }
 
@@ -262,14 +262,12 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
         let (g_mline, t_mline)  = chunk_window[0][4];
         let (g_wline, t_wline)  = chunk_window[0][5];
 
-        let (g_fline_next, t_fline_next)    = chunk_window[1][0];
-        let (g_dline_next, t_dline_next)    = chunk_window[1][1];
-        let (g_rline_next, t_rline_next)    = chunk_window[1][2];
-        let (g_eline_next, t_eline_next)    = chunk_window[1][3];
-        let (g_mline_next, t_mline_next)    = chunk_window[1][4];
-        let (g_wline_next, t_wline_next)    = chunk_window[1][5];
-
-        let first_cycle = window_num == 1;
+        let (g_fline_next, _t_fline_next)   = chunk_window[1][0];
+        let (g_dline_next, _t_dline_next)   = chunk_window[1][1];
+        let (_g_rline_next, _t_rline_next)  = chunk_window[1][2];
+        let (g_eline_next, _t_eline_next)   = chunk_window[1][3];
+        let (_g_mline_next, _t_mline_next)  = chunk_window[1][4];
+        let (_g_wline_next, _t_wline_next)  = chunk_window[1][5];
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         //Pipeline updating logic
@@ -306,9 +304,21 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
             false
         };
 
+        if !fetch_and_decode_stalled_next_cycle {
+            if let Err(InstrNotPresentReason::StallSoInstrWordNotAvailable) = pipeline.f.instr {
+                //No longer stalled, need to populate the instruction now that we should have it
+                //(in the next cycle we have it that is, which is within lookahead range)
+                if let ParsedLine::F{instr: g_instr_next, ..} = g_fline_next {
+                    pipeline.f.instr = Ok(g_instr_next.into());
+                } else {
+                    println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd6diff correct?\x1b[0m");
+                }
+            }
+        }
+
         if fetch_and_decode_stalled {
             pipeline.dumb_advance_with_stalled_fetch_and_decode();
-        } else if let (ParsedLine::F{pc: g_pc, instr: g_instr}, ParsedLine::F{pc: g_pc_next, instr: g_instr_next}) = (g_fline, g_fline_next) {
+        } else if let (ParsedLine::F{pc: g_pc, ..}, ParsedLine::F{instr: g_instr_next, ..}) = (g_fline, g_fline_next) {
             //Need to look at the fetch stage a cycle in the future to get the instruction word
             //because in PD6, imemory has one cycle of additional latency.
 
@@ -331,11 +341,6 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
                     println!("implement ecall as a NOP, and since these traces end in an ecall, we thus run");
                     println!("into the data afterwards in memory, interpreting it as an instruction)\x1b[0m");
                     break;
-                }
-
-                //No longer stalled, need to populate the instruction now that we should have it
-                if let Err(InstrNotPresentReason::StallSoInstrWordNotAvailable) = pipeline.f.instr {
-                    pipeline.f.instr = Ok(g_instr.into());
                 }
 
                 pipeline.dumb_advance(g_pc, Ok(g_instr_next.into()));
@@ -388,8 +393,6 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
             chunk_error_count += 1;
             println!("    \x1b[1;31mError {}: {}\x1b[0m", chunk_error_count, message);
         };
-
-        print_error("debug");
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         //[F] Line Checking
