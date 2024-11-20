@@ -123,8 +123,8 @@ impl Pipeline {
 }
 
 impl Mode {
-    /* const */ fn get() -> Self {
-        match const { env!("CARGO_BIN_NAME") } {
+    fn get() -> Self {
+        match env!("CARGO_BIN_NAME") {
             "pd6boarddiff"  => Self::Board,
             "pd6simdiff"    => Self::Sim,
             _               => panic!("pd6diff was not compiled as pd6boarddiff or pd6simdiff!"),
