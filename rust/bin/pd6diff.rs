@@ -57,12 +57,18 @@ const LOGO: &'static str = concat!("\x1b[1;36m", r"
  * Types
  * --------------------------------------------------------------------------------------------- */
 
-type Result<T> = std::result::Result<T, ()>;
+type Result<T>  = std::result::Result<T, ()>;
+type MaybeInstr = std::result::Result<Instruction, InstrNotPresentReason>;
 
-#[derive(Default)]
+#[derive(Debug)]
+enum InstrNotPresentReason {
+    Bubble,
+    StallSoInstrWordNotAvailable,
+}
+
 struct StageState {
     pc:     u32,
-    instr:  Option<Instruction>,
+    instr:  MaybeInstr,
 }
 
 #[derive(Default)]
@@ -85,27 +91,27 @@ enum Mode {
 
 impl StageState {
     fn dis(&self) -> String {
-        if let Some(instr_ref) = self.instr.as_ref() {
-            format!("instruction @PC {:08x}: {}", self.pc, disassemble(instr_ref))
-        } else {
-            String::from("nothing (bubble)")
+        match self.instr.as_ref() {
+            Ok(instr_ref)                                               => format!("instruction @PC {:08x}: {:08x}: {}", self.pc, 0xDEAD, disassemble(instr_ref)),
+            Err(InstrNotPresentReason::Bubble)                          => String::from("nothing (bubble)"),
+            Err(InstrNotPresentReason::StallSoInstrWordNotAvailable)    => format!("instruction @PC {:08x}: ????????: instruction word not available from golden trace due to stall", self.pc),
         }
     }
 
     const fn is_bubble(&self) -> bool {
-        self.instr.is_none()
+        matches!(self.instr, Err(InstrNotPresentReason::Bubble))
     }
 }
 
 impl Pipeline {
-    fn dumb_advance(&mut self, f_pc: u32, f_instr: Instruction) {
+    fn dumb_advance(&mut self, f_pc: u32, f_instr: MaybeInstr) {
         self.w = std::mem::take(&mut self.m);
         self.m = std::mem::take(&mut self.e);
         self.e = std::mem::take(&mut self.d);
         self.d = std::mem::take(&mut self.f);
         self.f = StageState {
             pc:     f_pc,
-            instr:  Some(f_instr),
+            instr:  f_instr,
         };
     }
 
@@ -135,6 +141,15 @@ impl Mode {
 /* ------------------------------------------------------------------------------------------------
  * Trait Implementations
  * --------------------------------------------------------------------------------------------- */
+
+impl Default for StageState {
+    fn default() -> Self {
+        Self {
+            pc:     0,
+            instr:  Err(InstrNotPresentReason::Bubble),
+        }
+    }
+}
 
 impl Display for Mode {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -227,26 +242,34 @@ fn compare_board(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
 
 //Returns the number of errors
 fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
-    panic!("Sim mode not yet implemented, still making PD5 latency assumptions!");
-
     let mut total_error_count   = 0;
     let mut pipeline            = Pipeline::default();
 
     //TODO for better performance, avoid collecting here (too bad array_chunks() is unstable)
-    let lines_vec: Vec<(ParsedLine, ParsedLine)> = golden.zip(test).collect();
-    let line_chunks = lines_vec.chunks(6);//[F], [D], [R], [E], [M], [W]
+    let lines_vec: Vec<(ParsedLine, ParsedLine)>    = golden.zip(test).collect();
+    let line_chunks: Vec<_>                         = lines_vec.chunks(6).collect();//[F], [D], [R], [E], [M], [W]
+    let line_chunks_windowed                        = line_chunks.windows(2);
 
     let mut squash_fetch_and_decode_next_cycle = false;
 
-    for (chunk_num, chunk) in line_chunks.enumerate() {
+    for (window_num, chunk_window) in line_chunks_windowed.enumerate() {
         //Convenient aliases
-        let chunk_num           = chunk_num + 1;//Since enumerate() is zero-indexed
-        let (g_fline, t_fline)  = chunk[0];
-        let (g_dline, t_dline)  = chunk[1];
-        let (g_rline, t_rline)  = chunk[2];
-        let (g_eline, t_eline)  = chunk[3];
-        let (g_mline, t_mline)  = chunk[4];
-        let (g_wline, t_wline)  = chunk[5];
+        let window_num = window_num + 1;//Since enumerate() is zero-indexed
+        let (g_fline, t_fline)  = chunk_window[0][0];
+        let (g_dline, t_dline)  = chunk_window[0][1];
+        let (g_rline, t_rline)  = chunk_window[0][2];
+        let (g_eline, t_eline)  = chunk_window[0][3];
+        let (g_mline, t_mline)  = chunk_window[0][4];
+        let (g_wline, t_wline)  = chunk_window[0][5];
+
+        let (g_fline_next, t_fline_next)    = chunk_window[1][0];
+        let (g_dline_next, t_dline_next)    = chunk_window[1][1];
+        let (g_rline_next, t_rline_next)    = chunk_window[1][2];
+        let (g_eline_next, t_eline_next)    = chunk_window[1][3];
+        let (g_mline_next, t_mline_next)    = chunk_window[1][4];
+        let (g_wline_next, t_wline_next)    = chunk_window[1][5];
+
+        let first_cycle = window_num == 1;
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         //Pipeline updating logic
@@ -271,9 +294,24 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
             false
         };
 
+        //Similar check for if the stall is happening next cycle
+        let fetch_and_decode_stalled_next_cycle = if let (ParsedLine::D{pc: g_d_pc_next, ..}, ParsedLine::E{pc: g_e_pc_next, ..}) = (g_dline_next, g_eline_next) {
+            if !pipeline.d.is_bubble() {
+                g_d_pc_next == g_e_pc_next
+            } else {
+                false
+            }
+        } else {
+            println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd6diff correct?\x1b[0m");
+            false
+        };
+
         if fetch_and_decode_stalled {
             pipeline.dumb_advance_with_stalled_fetch_and_decode();
-        } else if let ParsedLine::F{pc: g_pc, instr: g_instr} = g_fline {
+        } else if let (ParsedLine::F{pc: g_pc, instr: g_instr}, ParsedLine::F{pc: g_pc_next, instr: g_instr_next}) = (g_fline, g_fline_next) {
+            //Need to look at the fetch stage a cycle in the future to get the instruction word
+            //because in PD6, imemory has one cycle of additional latency.
+
             if g_pc == 0 {
                 println!("PC in golden trace became 00000000, assuming we've reached the end!");
                 println!("\x1b[90m(This is expected for simple-programs golden traces, since if you");
@@ -283,21 +321,32 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
 
                 break;
             }
-            if g_instr == 0 {
-                println!("Encountered illegal instruction in golden trace, assuming we've reached the end!");
-                println!("\x1b[90m(This is expected for individual-instruction golden traces, since we simply");
-                println!("implement ecall as a NOP, and since these traces end in an ecall, we thus run");
-                println!("into the data afterwards in memory, interpreting it as an instruction)\x1b[0m");
-                break;
+
+            if fetch_and_decode_stalled_next_cycle {
+                pipeline.dumb_advance(g_pc, Err(InstrNotPresentReason::StallSoInstrWordNotAvailable));
+            } else {
+                if g_instr_next == 0 {
+                    println!("Encountered illegal instruction in golden trace, assuming we've reached the end!");
+                    println!("\x1b[90m(This is expected for individual-instruction golden traces, since we simply");
+                    println!("implement ecall as a NOP, and since these traces end in an ecall, we thus run");
+                    println!("into the data afterwards in memory, interpreting it as an instruction)\x1b[0m");
+                    break;
+                }
+
+                //No longer stalled, need to populate the instruction now that we should have it
+                if let Err(InstrNotPresentReason::StallSoInstrWordNotAvailable) = pipeline.f.instr {
+                    pipeline.f.instr = Ok(g_instr.into());
+                }
+
+                pipeline.dumb_advance(g_pc, Ok(g_instr_next.into()));
             }
-            pipeline.dumb_advance(g_pc, g_instr.into());
         } else {
             println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd6diff correct?\x1b[0m");
         }
 
         //If execute is processing a branch and the branch taken flag is set, or this is an
         //unconditional jump, squash fetch and decode next cycle
-        if let Some(instr) = pipeline.e.instr.as_ref() {
+        if let Ok(instr) = pipeline.e.instr.as_ref() {
             if instr.is_btype() {
                 if let ParsedLine::E{branch_taken: g_branch_taken, ..} = g_eline {
                     //It seems that branch taken in their traces for PD5 is now also set for
@@ -317,9 +366,9 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
             if chunk_error_count == 0 {
                 println!(
                     "At least one error on clock cycle #{} containing lines {} thru {} (inclusive):",
-                    chunk_num,
-                    chunk_num * 6 - 5,
-                    chunk_num * 6
+                    window_num,
+                    window_num * 6 - 5,
+                    window_num * 6
                 );
                 println!("  \x1b[1;33mGolden\x1b[0m                                      | \x1b[1mYours\x1b[0m");
                 println!("  \x1b[1;33m  {}\x1b[0m                     |   \x1b[1m{}\x1b[0m", g_fline, t_fline);
@@ -339,6 +388,8 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
             chunk_error_count += 1;
             println!("    \x1b[1;31mError {}: {}\x1b[0m", chunk_error_count, message);
         };
+
+        print_error("debug");
 
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         //[F] Line Checking

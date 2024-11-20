@@ -196,7 +196,7 @@ impl std::fmt::Display for ParsedLine {
 pub fn disassemble(instr: &Instruction) -> String {
     let mut buffer = Vec::new();
     instr.disassemble(&mut buffer).unwrap();
-    String::from_utf8(buffer).unwrap()
+    String::from_utf8(buffer).unwrap().trim().to_string()
 }
 
 /* ------------------------------------------------------------------------------------------------
