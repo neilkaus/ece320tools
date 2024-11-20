@@ -264,7 +264,7 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
 
         let (g_fline_next, _t_fline_next)   = chunk_window[1][0];
         let (g_dline_next, _t_dline_next)   = chunk_window[1][1];
-        let (_g_rline_next, _t_rline_next)  = chunk_window[1][2];
+        let (g_rline_next, t_rline_next)    = chunk_window[1][2];
         let (g_eline_next, _t_eline_next)   = chunk_window[1][3];
         let (_g_mline_next, _t_mline_next)  = chunk_window[1][4];
         let (_g_wline_next, _t_wline_next)  = chunk_window[1][5];
@@ -486,16 +486,18 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
             }
 
             if let (
-                ParsedLine::R{addr_rs1: g_addr_rs1, addr_rs2: g_addr_rs2, data_rs1: g_data_rs1, data_rs2: g_data_rs2},
-                ParsedLine::R{addr_rs1: t_addr_rs1, addr_rs2: t_addr_rs2, data_rs1: t_data_rs1, data_rs2: t_data_rs2}
-            ) = (g_rline, t_rline) {
+                ParsedLine::R{addr_rs1: g_addr_rs1, addr_rs2: g_addr_rs2, ..},
+                ParsedLine::R{addr_rs1: t_addr_rs1, addr_rs2: t_addr_rs2, ..},
+                ParsedLine::R{data_rs1: g_data_rs1_next, data_rs2: g_data_rs2_next, ..},
+                ParsedLine::R{data_rs1: t_data_rs1_next, data_rs2: t_data_rs2_next, ..}
+            ) = (g_rline, t_rline, g_rline_next, t_rline_next) {
                 if let Some(jzj_rs1) = instr.get_rs1() {
                     if g_addr_rs1 != t_addr_rs1 {
                         print_error("[R] RS1 addresses do not match!");
                     }
                     assert_eq!(g_addr_rs1, jzj_rs1, "pd6diff bug or bad golden trace");
 
-                    if g_data_rs1 != t_data_rs1 {
+                    if g_data_rs1_next != t_data_rs1_next {
                         print_error("[R] RS1 data does not match!");
                     }
                 }
@@ -506,7 +508,7 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
                     }
                     assert_eq!(g_addr_rs2, jzj_rs2, "pd6diff bug or bad golden trace");
 
-                    if g_data_rs2 != t_data_rs2 {
+                    if g_data_rs2_next != t_data_rs2_next {
                         print_error("[R] RS2 data does not match!");
                     }
                 }
