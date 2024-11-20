@@ -1,6 +1,6 @@
 [package]
 name = "ece320tools"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2021"
 
 [dependencies]
@@ -17,6 +17,14 @@ path = "rust/bin/betterpd4diff.rs"
 [[bin]]
 name = "pd5diff"
 path = "rust/bin/pd5diff.rs"
+
+[[bin]]
+name = "pd6boarddiff"
+path = "rust/bin/pd6boarddiff.rs"
+
+[[bin]]
+name = "pd6simdiff"
+path = "rust/bin/pd6simdiff.rs"
 
 [profile.release]
 codegen-units   = 1
