@@ -294,7 +294,7 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
 
         //Similar check for if the stall is happening next cycle
         let fetch_and_decode_stalled_next_cycle = if let (ParsedLine::D{pc: g_d_pc_next, ..}, ParsedLine::E{pc: g_e_pc_next, ..}) = (g_dline_next, g_eline_next) {
-            if !pipeline.d.is_bubble() {
+            if !pipeline.f.is_bubble() {//Look at if F is a bubble because we care if decode is a bubble NEXT cycle
                 g_d_pc_next == g_e_pc_next
             } else {
                 false
