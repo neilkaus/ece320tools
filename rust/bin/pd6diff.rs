@@ -262,7 +262,7 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
         let (g_mline, t_mline)  = chunk_window[0][4];
         let (g_wline, t_wline)  = chunk_window[0][5];
 
-        let (g_fline_next, _t_fline_next)   = chunk_window[1][0];
+        let (g_fline_next, t_fline_next)    = chunk_window[1][0];
         let (g_dline_next, _t_dline_next)   = chunk_window[1][1];
         let (g_rline_next, t_rline_next)    = chunk_window[1][2];
         let (g_eline_next, _t_eline_next)   = chunk_window[1][3];
@@ -397,14 +397,21 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
         //////////////////////////////////////////////////////////////////////////////////////////////////////
         //[F] Line Checking
         //////////////////////////////////////////////////////////////////////////////////////////////////////
-        if let (ParsedLine::F{pc: g_pc, instr: g_instr}, ParsedLine::F{pc: t_pc, instr: t_instr}) = (g_fline, t_fline) {
+        if let (
+            ParsedLine::F{pc: g_pc, ..},
+            ParsedLine::F{pc: t_pc, ..},
+            ParsedLine::F{instr: g_instr_next, ..},
+            ParsedLine::F{instr: t_instr_next, ..}
+        ) = (g_fline, t_fline, g_fline_next, t_fline_next) {
             if g_pc != t_pc {
-                print_error("[F] PCs do not match!");
+                print_error("[F] PCs do not match (this is probably the start of your problem right here)!");
             }
             assert_eq!(g_pc, pipeline.f.pc, "pd6diff bug or bad golden trace");
 
-            if g_instr != t_instr {
-                print_error("[F] Fetched instructions do not match!");
+            if !squash_fetch_and_decode_next_cycle {
+                if g_instr_next != t_instr_next {
+                    print_error("[F] Fetched instructions do not match (on the next cycle)!");
+                }
             }
         } else {
             print_error("[F] Mismatched line types or bad traces! Something is VERY wrong!");
@@ -498,7 +505,7 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
                     assert_eq!(g_addr_rs1, jzj_rs1, "pd6diff bug or bad golden trace");
 
                     if g_data_rs1_next != t_data_rs1_next {
-                        print_error("[R] RS1 data does not match!");
+                        print_error("[R] RS1 data does not match (on the next cycle)!");
                     }
                 }
 
@@ -509,7 +516,7 @@ fn compare_sim(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
                     assert_eq!(g_addr_rs2, jzj_rs2, "pd6diff bug or bad golden trace");
 
                     if g_data_rs2_next != t_data_rs2_next {
-                        print_error("[R] RS2 data does not match!");
+                        print_error("[R] RS2 data does not match! (on the next cycle)");
                     }
                 }
             } else {
