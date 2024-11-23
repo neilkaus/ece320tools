@@ -1,6 +1,6 @@
 /*
  * File:    pd6diff.rs
- * Brief:   Intelligent correctness checker for ECE 320's PD5
+ * Brief:   Intelligent correctness checker for ECE 320's PD6
  *
  * Copyright (C) 2024 John Jekel
  * See the LICENSE file at the root of the project for licensing info.
@@ -236,8 +236,202 @@ fn load_trace(path: impl AsRef<std::path::Path>) -> Result<ParsedLineIterator> {
 }
 
 //Returns the number of errors
-fn compare_board(_golden: ParsedLineIterator, _test: ParsedLineIterator) -> u32 {
-    panic!("Board mode not yet implemented, need to handle only checking writeback!");
+fn compare_board(golden: ParsedLineIterator, test: ParsedLineIterator) -> u32 {
+    let mut total_error_count   = 0;
+    let mut pipeline            = Pipeline::default();
+
+    //TODO for better performance, avoid collecting here (too bad array_chunks() is unstable)
+    //golden has [F], [D], [R], [E], [M], [W]
+    //test only has [W] when in board mode
+    let golden: Vec<ParsedLine>                     = golden.collect();
+    let lines_vec: Vec<(&[ParsedLine], ParsedLine)> = golden.chunks(6).zip(test).collect();
+    let line_chunks_windowed                        = lines_vec.windows(2);
+
+    let mut squash_fetch_and_decode_next_cycle = false;
+
+    for (window_num, chunk_window) in line_chunks_windowed.enumerate() {
+        //Convenient aliases
+        let window_num = window_num + 1;//Since enumerate() is zero-indexed
+        let g_fline = chunk_window[0].0[0];
+        let g_dline = chunk_window[0].0[1];
+        let g_rline = chunk_window[0].0[2];
+        let g_eline = chunk_window[0].0[3];
+        let g_mline = chunk_window[0].0[4];
+        let g_wline = chunk_window[0].0[5];
+        let t_wline = chunk_window[0].1;
+
+        let g_fline_next    = chunk_window[1].0[0];
+        let g_dline_next    = chunk_window[1].0[1];
+        let _g_rline_next   = chunk_window[1].0[2];
+        let g_eline_next    = chunk_window[1].0[3];
+        let _g_mline_next   = chunk_window[1].0[4];
+        let _g_wline_next   = chunk_window[1].0[5];
+        let _t_wline_next   = chunk_window[1].1;
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //Pipeline updating logic
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        if squash_fetch_and_decode_next_cycle {
+            pipeline.f = StageState::default();
+            pipeline.d = StageState::default();
+            squash_fetch_and_decode_next_cycle = false;
+        }
+
+        //Check if fetch and decode stalled, in which case we shouldn't touch fetch or decode and should squash execute
+        let fetch_and_decode_stalled = if let (ParsedLine::D{pc: g_d_pc, ..}, ParsedLine::E{pc: g_e_pc, ..}) = (g_dline, g_eline) {
+            //Don't check if E is a bubble because it could be we're stalling multiple cycles
+            //We do need to check D though because if the PCs just happen to match but were squashed we're not actually stalling
+            if !pipeline.d.is_bubble() {
+                g_d_pc == g_e_pc
+            } else {
+                false
+            }
+        } else {
+            println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd6diff correct?\x1b[0m");
+            false
+        };
+
+        //Similar check for if the stall is happening next cycle
+        let fetch_and_decode_stalled_next_cycle = if let (ParsedLine::D{pc: g_d_pc_next, ..}, ParsedLine::E{pc: g_e_pc_next, ..}) = (g_dline_next, g_eline_next) {
+            if !pipeline.f.is_bubble() {//Look at if F is a bubble because we care if decode is a bubble NEXT cycle
+                g_d_pc_next == g_e_pc_next
+            } else {
+                false
+            }
+        } else {
+            println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd6diff correct?\x1b[0m");
+            false
+        };
+
+        if !fetch_and_decode_stalled_next_cycle {
+            if let Err(InstrNotPresentReason::StallSoInstrWordNotAvailable) = pipeline.f.instr {
+                //No longer stalled, need to populate the instruction now that we should have it
+                //(in the next cycle we have it that is, which is within lookahead range)
+                if let ParsedLine::F{instr: g_instr_next, ..} = g_fline_next {
+                    pipeline.f.instr = Ok(g_instr_next.into());
+                } else {
+                    println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd6diff correct?\x1b[0m");
+                }
+            }
+        }
+
+        if fetch_and_decode_stalled {
+            pipeline.dumb_advance_with_stalled_fetch_and_decode();
+        } else if let (ParsedLine::F{pc: g_pc, ..}, ParsedLine::F{instr: g_instr_next, ..}) = (g_fline, g_fline_next) {
+            //Need to look at the fetch stage a cycle in the future to get the instruction word
+            //because in PD6, imemory has one cycle of additional latency.
+
+            if g_pc == 0 {
+                println!("PC in golden trace became 00000000, assuming we've reached the end!");
+                println!("\x1b[90m(This is expected for simple-programs golden traces, since if you");
+                println!("look at their assembly, when they return from main, since `ra` is initialized");
+                println!("to 0 by our hardware, but never by their code, the PC naturally becomes 0.");
+                println!("Technically a bug in their test programs, but it's a nice end-of-code flag for us!)\x1b[0m");
+
+                break;
+            }
+
+            if fetch_and_decode_stalled_next_cycle {
+                pipeline.dumb_advance(g_pc, Err(InstrNotPresentReason::StallSoInstrWordNotAvailable));
+            } else {
+                if g_instr_next == 0 {
+                    println!("Encountered illegal instruction in golden trace, assuming we've reached the end!");
+                    println!("\x1b[90m(This is expected for individual-instruction golden traces, since we simply");
+                    println!("implement ecall as a NOP, and since these traces end in an ecall, we thus run");
+                    println!("into the data afterwards in memory, interpreting it as an instruction)\x1b[0m");
+                    break;
+                }
+
+                pipeline.dumb_advance(g_pc, Ok(g_instr_next.into()));
+            }
+        } else {
+            println!("\x1b[1;31mWeirdness in golden trace, are your arguments to pd6diff correct?\x1b[0m");
+        }
+
+        //If execute is processing a branch and the branch taken flag is set, or this is an
+        //unconditional jump, squash fetch and decode next cycle
+        if let Ok(instr) = pipeline.e.instr.as_ref() {
+            if instr.is_btype() {
+                if let ParsedLine::E{branch_taken: g_branch_taken, ..} = g_eline {
+                    //It seems that branch taken in their traces for PD5 is now also set for
+                    //unconditional branches? Weird that that wasn't the case for PD4...
+                    squash_fetch_and_decode_next_cycle = g_branch_taken;
+                }
+            } else if instr.is_uncond_jump() {
+                squash_fetch_and_decode_next_cycle = true;
+            }
+        }
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //Error handling used by line checking below
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        let mut chunk_error_count = 0;
+        let mut print_error = |message| {
+            if chunk_error_count == 0 {
+                println!(
+                    "At least one error on clock cycle #{} containing lines {} thru {} (inclusive):",
+                    window_num,
+                    window_num * 6 - 5,
+                    window_num * 6
+                );
+                println!("  \x1b[1;33mGolden\x1b[0m                                      | \x1b[1mYours\x1b[0m");
+                println!("  \x1b[1;33m  {}\x1b[0m                     |   \x1b[1m(not available in board trace)\x1b[0m", g_fline);
+                println!("  \x1b[1;33m  {}\x1b[0m |   \x1b[1m(not available in board trace)\x1b[0m", g_dline);
+                println!("  \x1b[1;33m  {}\x1b[0m               |   \x1b[1m(not available in board trace)\x1b[0m", g_rline);
+                println!("  \x1b[1;33m  {}\x1b[0m                   |   \x1b[1m(not available in board trace)\x1b[0m", g_eline);
+                println!("  \x1b[1;33m  {}\x1b[0m        |   \x1b[1m(not available in board trace)\x1b[0m", g_mline);
+                println!("  \x1b[1;33m  {}\x1b[0m                |   \x1b[1m{}\x1b[0m", g_wline, t_wline);
+                println!("  \x1b[1;33mGolden Disassembly:");
+                println!("    \x1b[1;33m[F]     is processing {}\x1b[0m", pipeline.f.dis());
+                println!("    \x1b[1;33m[D]/[R] is processing {}\x1b[0m", pipeline.d.dis());
+                println!("    \x1b[1;33m[E]     is processing {}\x1b[0m", pipeline.e.dis());
+                println!("    \x1b[1;33m[M]     is processing {}\x1b[0m", pipeline.m.dis());
+                println!("    \x1b[1;33m[W]     is processing {}\x1b[0m", pipeline.w.dis());
+                println!("  \x1b[1;31mError(s):\x1b[0m");
+            }
+            chunk_error_count += 1;
+            println!("    \x1b[1;31mError {}: {}\x1b[0m", chunk_error_count, message);
+        };
+
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        //[W] Line Checking
+        //////////////////////////////////////////////////////////////////////////////////////////////////////
+        if !pipeline.w.is_bubble() {
+            let instr = pipeline.w.instr.as_ref().unwrap();
+            if let (
+                ParsedLine::W{pc: g_pc, we: g_we, addr_rd: g_addr_rd, data_rd: g_data_rd},
+                ParsedLine::W{pc: t_pc, we: t_we, addr_rd: t_addr_rd, data_rd: t_data_rd}
+            ) = (g_wline, t_wline) {
+                if g_pc != t_pc {
+                    print_error("[W] PCs do not match!");
+                }
+                assert_eq!(g_pc, pipeline.w.pc, "pd6diff bug or bad golden trace");
+
+                if !instr.is_fence() {
+                    if g_we != t_we {
+                        print_error("[W] Write enable line does not match!");
+                    }
+
+                    if let Some(jzj_addr_rd) = instr.get_rd() {
+                        if g_addr_rd != t_addr_rd {
+                            print_error("[W] RD addresses do not match!");
+                        }
+                        assert_eq!(g_addr_rd, jzj_addr_rd, "pd6diff bug or bad golden trace");
+
+                        if g_data_rd != t_data_rd {
+                            print_error("[W] RD data does not match!");
+                        }
+                    }
+                }
+            } else {
+                print_error("[W] Mismatched line types or bad traces! Something is VERY wrong!");
+            }
+        }
+
+        total_error_count += chunk_error_count;
+    }
+
+    total_error_count
 }
 
 //Returns the number of errors
