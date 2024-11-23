@@ -14,6 +14,41 @@ Whelp hope this helps people out!
 
 \- JZJ
 
+## PD6
+
+### pd6simdiff
+
+An upgraded version of pd5diff meant for comparing your Verilator simulation traces against golden_sim ones.
+
+Doesn't work for post-synthesis/route or actual traces from the board; see `pd6boarddiff` for that.
+
+Example usage:
+
+```bash
+
+$ ./pd6simdiff.sh path/to/golden_sim_trace.trace path/to/your_sim_trace.trace
+
+```
+
+### pd6boarddiff
+
+An upgraded version of pd5diff meant for comparing Xsim post-synthesis/route and FPGA traces against golden_sim ones.
+
+Doesn't work for Verilator simulation traces (expects that your trace only has `[W]` lines).
+
+Also, the provided golden_board traces don't provide enough information for the autograder to properly do it's job.
+
+You must instead provide a golden_sim trace as the first argument (the `[W]` lines of these are exactly the same as the golden_board ones
+but also have other lines that are needed for analysis).
+
+Example usage:
+
+```bash
+
+$ ./pd6boarddiff.sh path/to/golden_sim_trace.trace path/to/your_board_trace.trace
+
+```
+
 ## PD5
 
 ### pd5diff
